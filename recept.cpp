@@ -2,91 +2,24 @@
 #include <array>
 #include <limits>
 
-#ifndef RING_SIZE
-#define RING_SIZE 16
+#ifndef ALPHA_2K
+#define ALPHA_2K 1
 #endif
 
-template<typename T, int Size>
-class ring {
-
-public:
-
-	inline void add(const T& value) {
-
-		if (empty()) {
-
-			fill(value);
-			return;
-		}
-
-		_index = (_index + 1) % Size;
-		const T& oldest = _values[_index];
-		_sum = _sum + value - oldest;
-		_values[_index] = value;
-	}
-
-	inline void clear() {
-
-		_sum = std::numeric_limits<T>::max();
-	}
-
-	inline bool empty() const {
-
-		return _sum == std::numeric_limits<T>::max();
-	}
-
-	/**
-	 * Return the last (i.e., newest) item added to the ring.
-	 */
-	inline const T& front() const {
-
-		return _values[_index];
-	}
-
-	inline void fill(const T& value) {
-
-		_values.fill(value);
-		_sum = value*Size;
-	}
-
-	inline T sum() const {
-
-		return _sum;
-	}
-
-	inline T average() const {
-
-		return _sum/Size;
-	}
-
-private:
-
-	std::array<T, Size> _values;
-	uint8_t _index;
-	T _sum;
-};
-
-static ring<uint32_t, RING_SIZE> ring_x;
-static ring<uint32_t, RING_SIZE> ring_y;
-
-template<typename Ring>
-inline uint32_t update_pos(Ring& ring, uint32_t value) {
-
-	ring.add(value);
-	return ring.average();
-}
+static uint32_t ema_x;
+static uint32_t ema_y;
 
 void filter(char* buf) {
 
 	const uint8_t type = (uint8_t)buf[8];
 	const uint16_t code = (
-		(uint16_t)buf[10]      |
-		(uint16_t)buf[11] << 8);
+			(uint16_t)buf[10]      |
+			(uint16_t)buf[11] << 8);
 	uint32_t value = (
-		(uint32_t)buf[12]       |
-		(uint32_t)buf[13] << 8  |
-		(uint32_t)buf[14] << 16 |
-		(uint32_t)buf[15] << 24);
+			(uint32_t)buf[12]       |
+			(uint32_t)buf[13] << 8  |
+			(uint32_t)buf[14] << 16 |
+			(uint32_t)buf[15] << 24);
 
 	// type == 1 && code == 320 && value == 1 -> pen in
 	// type == 1 && code == 320 && value == 0 -> pen out
@@ -103,22 +36,22 @@ void filter(char* buf) {
 	// type == 3 && code == 26 -> value == tilt x
 	// type == 3 && code == 27 -> value == tilt y
 
+
 	// pen/eraser in
 	if (type == 1 && ((code == 320 && value == 1) || (code == 321 && value == 1))) {
-
-		ring_x.clear();
-		ring_y.clear();
+		ema_x = value; // Reset EMA when pen/eraser is touching
+		ema_y = value; // Reset EMA when pen/eraser is touching
 	}
 
-	if (type == 3) {
-
+	if (type == 3 && code < 2) {
 		if (code == 0) {
-
-			value = update_pos(ring_x, value);
-
+			ema_x += value;
+			value = ema_x >> ALPHA_2K;
+			ema_x -= value;
 		} else if (code == 1) {
-
-			value = update_pos(ring_y, value);
+			ema_y += value;
+			value = ema_y >> ALPHA_2K;
+			ema_y -= value;
 		}
 
 		// copy value back to buffer
